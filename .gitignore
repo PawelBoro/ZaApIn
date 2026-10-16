@@ -7,3 +7,8 @@ result-*
 
 # Ignore NixOS interactive test driver history
 **/.nixos-test-history
+
+# Ignore file for tests
+test.sh
+test.js
+test.ps1
