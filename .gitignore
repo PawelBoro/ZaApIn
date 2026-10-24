@@ -9,6 +9,7 @@ result-*
 **/.nixos-test-history
 
 # Ignore file for tests
-test.sh
-test.js
-test.ps1
+test.*
+
+# Ignore all technical files and folders
+.*
