@@ -1,18 +1,21 @@
-# Ignore build outputs from performing a nix-build or `nix build` command
-result
-result-*
-
-# Ignore automatically generated direnv output
-.direnv
-
-# Ignore NixOS interactive test driver history
-**/.nixos-test-history
-
-# Ignore file for tests
-test.*
-
 # Dependencies
 node_modules/
 
-# Local environment and tooling files
+# Environment (secrets) - only .env.example is committed
 .env
+.env.*
+!.env.example
+
+# Logs
+logs/
+*.log
+npm-debug.log*
+
+# OS files
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# Editors
+.vscode/
+.idea/
