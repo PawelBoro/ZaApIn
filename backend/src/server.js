@@ -1,26 +1,9 @@
 #!/usr/bin/env node
-const express = require("express");
-const app = express();
-const port = 3000;
-const path = require("path");
+require("dotenv").config();
+const app = require("./app");
 
-/*
-Static files - Publiczne pliki statyczne
-*/
-app.use(express.static(path.join(__dirname, "public")));
-/*
-Trasowanie
- */
-app.get("/", (req, res) => {
-  res.send("Hello World!");
-});
-
-app.get("/test", (req, res) => {
-  res.send("Hello Test World!");
-});
-
-app.get("/*", (req, res) => unexpected_route_handler);
+const port = process.env.PORT ?? 3000;
 
 app.listen(port, () => {
-  console.log(`Example app listening on port ${port}`);
+  console.log(`Server listening on port ${port}`);
 });
