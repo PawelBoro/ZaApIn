@@ -4,6 +4,7 @@ const path = require("path");
 const helmet = require("helmet");
 const negotiation = require("./middleware/negotiation");
 const { apiNotFound, errorHandler } = require("./middleware/errors");
+const authRouter = require("./routes/auth");
 
 const app = express();
 app.use(helmet());
@@ -21,6 +22,8 @@ app.use("/api", negotiation);
 app.get("/api/health", (req, res) => {
   res.json({ status: "ok" });
 });
+
+app.use("/api/auth", authRouter);
 
 app.use("/api", apiNotFound);
 
