@@ -5,6 +5,7 @@ const { z } = require("zod");
 const pool = require("../db");
 const { problem, validationErrors } = require("../lib/problem");
 const { sha256 } = require("../lib/hash");
+const { requireAdmin } = require("../middleware/auth");
 
 const TOKEN_TTL_SECONDS = Number.parseInt(process.env.TOKEN_TTL_SECONDS ?? "3600", 10);
 if (!(TOKEN_TTL_SECONDS > 0)) throw new Error("TOKEN_TTL_SECONDS must be a positive integer");
@@ -36,6 +37,11 @@ router.post("/login", async (req, res) => {
   );
   res.set("Cache-Control", "no-store");
   res.json({ accessToken: token, tokenType: "Bearer", expiresIn: TOKEN_TTL_SECONDS });
+});
+
+router.post("/logout", requireAdmin, async (req, res) => {
+  await pool.query("UPDATE sessions SET revoked_at = now() WHERE id = $1", [req.sessionId]);
+  res.status(204).end();
 });
 
 module.exports = router;
