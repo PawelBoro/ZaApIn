@@ -2,6 +2,7 @@ const express = require("express");
 const path = require("path");
 
 const helmet = require("helmet");
+const negotiation = require("./middleware/negotiation");
 const { apiNotFound, errorHandler } = require("./middleware/errors");
 
 const app = express();
@@ -15,6 +16,8 @@ app.use(express.static(path.join(__dirname, "public")));
 /*
 Trasowanie
  */
+app.use("/api", negotiation);
+
 app.get("/api/health", (req, res) => {
   res.json({ status: "ok" });
 });
