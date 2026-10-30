@@ -4,21 +4,23 @@ const { Pool } = require("pg");
 
 const run = promisify(execFile);
 
-// Entra access tokens live ~1h; cache one and refresh it a bit earlier.
-const TOKEN_CACHE_MS = 30 * 60 * 1000;
+// az may hand out a token from its own cache that is close to expiry, so cache
+// it until its real expiry time (minus a margin), not for a fixed period.
+const REFRESH_MARGIN_MS = 5 * 60 * 1000;
 let cachedToken = null;
-let cachedAt = 0;
+let expiresAt = 0;
 
 async function entraToken() {
-  if (cachedToken && Date.now() - cachedAt < TOKEN_CACHE_MS) return cachedToken;
+  if (cachedToken && Date.now() < expiresAt - REFRESH_MARGIN_MS) return cachedToken;
   const { stdout } = await run("az", [
     "account", "get-access-token",
     "--resource-type", "oss-rdbms",
-    "--query", "accessToken",
-    "-o", "tsv",
+    "--query", "{token: accessToken, expiresOn: expires_on}",
+    "-o", "json",
   ]);
-  cachedToken = stdout.trim();
-  cachedAt = Date.now();
+  const { token, expiresOn } = JSON.parse(stdout);
+  cachedToken = token;
+  expiresAt = expiresOn * 1000;
   return cachedToken;
 }
 
@@ -36,5 +38,8 @@ const pool = new Pool({
   ssl: true,
   connectionTimeoutMillis: 10000,
 });
+
+// Without a listener, a dropped idle connection would crash the process.
+pool.on("error", (err) => console.error("Idle database client error:", err.message));
 
 module.exports = pool;
