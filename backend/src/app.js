@@ -2,6 +2,9 @@ const express = require("express");
 const path = require("path");
 
 const helmet = require("helmet");
+const negotiation = require("./middleware/negotiation");
+const { apiNotFound, errorHandler } = require("./middleware/errors");
+const authRouter = require("./routes/auth");
 
 const app = express();
 app.use(helmet());
@@ -14,16 +17,20 @@ app.use(express.static(path.join(__dirname, "public")));
 /*
 Trasowanie
  */
+app.use("/api", negotiation);
+
 app.get("/api/health", (req, res) => {
   res.json({ status: "ok" });
 });
 
-app.use("/api", (req, res) => {
-  res.status(404).json({ title: "Not Found", status: 404 });
-});
+app.use("/api/auth", authRouter);
+
+app.use("/api", apiNotFound);
 
 app.use((req, res) => {
   res.status(404).sendFile(path.join(__dirname, "public", "view", "not_found.html"));
 });
+
+app.use(errorHandler);
 
 module.exports = app;
