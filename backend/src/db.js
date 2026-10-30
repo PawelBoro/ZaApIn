@@ -37,4 +37,7 @@ const pool = new Pool({
   connectionTimeoutMillis: 10000,
 });
 
+// Without a listener, a dropped idle connection would crash the process.
+pool.on("error", (err) => console.error("Idle database client error:", err.message));
+
 module.exports = pool;
