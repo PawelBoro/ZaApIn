@@ -7,6 +7,7 @@ const { apiNotFound, errorHandler } = require("./middleware/errors");
 const authRouter = require("./routes/auth");
 const seriesRouter = require("./routes/series");
 const sensorsRouter = require("./routes/sensors");
+const measurementsRouter = require("./routes/measurements");
 
 const app = express();
 app.use(helmet());
@@ -28,6 +29,7 @@ app.get("/api/health", (req, res) => {
 app.use("/api/auth", authRouter);
 app.use("/api/series", seriesRouter);
 app.use("/api/sensors", sensorsRouter);
+app.use("/api/measurements", measurementsRouter);
 
 app.use("/api", apiNotFound);
 

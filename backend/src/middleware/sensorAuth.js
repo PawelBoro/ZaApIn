@@ -21,4 +21,4 @@ async function requireSensor(req, res, next) {
   next();
 }
 
-module.exports = { requireSensor };
+module.exports = { requireSensor, unauthorized };
