@@ -53,6 +53,14 @@ function notFound(res) {
   return problem(res, 404, "Not Found", "Measurement not found.");
 }
 
+// Measurements are never changed or deleted; they go only with their series.
+function methodNotAllowed(allow) {
+  return (req, res) => {
+    res.set("Allow", allow);
+    problem(res, 405, "Method Not Allowed", "Measurements cannot be changed or deleted.");
+  };
+}
+
 const router = express.Router();
 
 router.get("/", async (req, res) => {
@@ -148,5 +156,10 @@ router.post("/", requireSensor, async (req, res) => {
     client.release();
   }
 });
+
+const notAllowedOnList = methodNotAllowed("GET, POST");
+const notAllowedOnOne = methodNotAllowed("GET");
+router.route("/").put(notAllowedOnList).patch(notAllowedOnList).delete(notAllowedOnList);
+router.route("/:id").put(notAllowedOnOne).patch(notAllowedOnOne).delete(notAllowedOnOne);
 
 module.exports = router;
