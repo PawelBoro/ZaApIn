@@ -9,4 +9,11 @@ function parseId(value) {
   return id <= MAX_INT ? id : null;
 }
 
-module.exports = { parseId };
+// Same for BIGSERIAL ids; capped at the largest integer a JS number holds exactly.
+function parseBigId(value) {
+  if (!/^[1-9]\d*$/.test(value)) return null;
+  const id = Number(value);
+  return id <= Number.MAX_SAFE_INTEGER ? id : null;
+}
+
+module.exports = { MAX_INT, parseId, parseBigId };
