@@ -2,6 +2,8 @@
 // Sensor emulator: sends synthetic or Open-Meteo values to the ZAI API.
 import { pathToFileURL } from "node:url";
 import { parseArgs } from "node:util";
+import { uniform, walkStart, walkStep, sine } from "./lib/values.mjs";
+import { sendWithRetry, describe } from "./lib/api.mjs";
 
 const MODES = ["uniform", "walk", "sine", "open-meteo"];
 const VARIABLES = ["temperature_2m", "relative_humidity_2m", "surface_pressure", "wind_speed_10m"];
@@ -23,9 +25,10 @@ Value source:
                        (open-meteo; default temperature_2m)
 
 Timing:
-  --backfill <hours>   send past values with timestamps, then exit
-  --count <n>          number of values (backfill default 24; live default unlimited)
-  --interval <s>       seconds between values (default 60)
+  --backfill <hours>   send past values with timestamps, ending now, then exit
+  --count <n>          number of values
+                       (backfill default: enough to cover the hours; live: unlimited)
+  --interval <s>       seconds between values (default 60; backfill 3600)
   --outlier <value>    send this one value and exit
 
   --dry-run            print what would be sent, send nothing
@@ -88,11 +91,13 @@ export function parseConfig(argv, env) {
   if (values.help) return { help: true };
 
   const dryRun = values["dry-run"];
+  const backfill = num(values, "backfill", { positive: true });
   const config = {
     dryRun,
     api: values.api ?? env.ZAI_API_URL,
     key: values.key ?? env.SENSOR_API_KEY,
-    interval: num(values, "interval", { fallback: 60, positive: true }),
+    // Backfill defaults to hourly values, like Open-Meteo's hourly data.
+    interval: num(values, "interval", { fallback: backfill !== undefined ? 3600 : 60, positive: true }),
   };
 
   // A dry run sends nothing, so it may run without the connection details.
@@ -124,14 +129,13 @@ export function parseConfig(argv, env) {
     throw new UsageError(`--mode must be one of: ${MODES.join(", ")}.`);
   }
 
-  if (values.backfill !== undefined) {
-    config.backfill = num(values, "backfill", { positive: true });
-  }
-  config.count = num(values, "count", {
-    fallback: config.backfill !== undefined ? 24 : undefined,
-    positive: true,
-    integer: true,
-  });
+  if (backfill !== undefined) config.backfill = backfill;
+  // Synthetic backfill: by default enough values to cover the hours.
+  // Open-Meteo backfill takes what the hourly data has; live runs until stopped.
+  const coverHours = backfill !== undefined && config.mode !== "open-meteo"
+    ? Math.max(1, Math.floor((backfill * 3600) / config.interval))
+    : undefined;
+  config.count = num(values, "count", { fallback: coverHours, positive: true, integer: true });
 
   if (config.mode === "open-meteo") {
     config.lat = num(values, "lat", { min: -90, max: 90 });
@@ -164,7 +168,67 @@ function maskKey(key) {
   return key ? `${key.slice(0, 4)}… (${key.length} chars)` : "(none)";
 }
 
-function main() {
+// Returns next(tSeconds) for a synthetic mode. The walk keeps its last value
+// here, so the functions in values.mjs stay pure.
+export function makeSource(config, rng = Math.random) {
+  switch (config.mode) {
+    case "uniform":
+      return () => uniform(config, rng);
+    case "walk": {
+      let value = walkStart(config);
+      return () => (value = walkStep(value, config, rng));
+    }
+    case "sine":
+      return (t) => sine(t, config, rng);
+    default:
+      throw new Error(`No synthetic source for mode ${config.mode}`);
+  }
+}
+
+// `count` instants `intervalS` apart, oldest first, the last one at nowMs.
+export function backfillTimes(count, intervalS, nowMs) {
+  return Array.from({ length: count }, (_, i) => new Date(nowMs - (count - 1 - i) * intervalS * 1000));
+}
+
+// Sends one measurement, prints the outcome, updates stats.
+// Returns false when sending more makes no sense.
+async function deliver(config, measurement, stats, label) {
+  if (config.dryRun) {
+    console.log(`${label} DRY-RUN value=${measurement.value}${measurement.timestamp ? ` time=${measurement.timestamp}` : ""}`);
+    return true;
+  }
+  const result = await sendWithRetry(config, measurement, {
+    onRetry: ({ attempt, retries, delayMs, result: r }) =>
+      console.log(`${label} ${describe(r, measurement)} -> ponowienie ${attempt}/${retries} za ${delayMs / 1000} s`),
+  });
+  console.log(`${label} ${describe(result, measurement)}`);
+  switch (result.outcome) {
+    case "created":
+      stats.sent++;
+      return true;
+    case "rejected":
+      stats.rejected++;
+      return true;
+    case "invalid":
+      stats.errors++;
+      return true;
+    default:
+      // unauthorized, fatal, or retryable after the last retry.
+      stats.errors++;
+      return false;
+  }
+}
+
+async function runSyntheticBackfill(config, stats) {
+  const next = makeSource(config);
+  const times = backfillTimes(config.count, config.interval, Date.now());
+  for (const [i, time] of times.entries()) {
+    const measurement = { value: next(time.getTime() / 1000), timestamp: time.toISOString() };
+    if (!(await deliver(config, measurement, stats, `[${i + 1}/${times.length}]`))) return;
+  }
+}
+
+async function main() {
   let config;
   try {
     config = parseConfig(process.argv.slice(2), process.env);
@@ -178,11 +242,17 @@ function main() {
     return;
   }
   console.log("Config:", { ...config, key: maskKey(config.key) });
-  if (config.dryRun) {
-    console.log("Dry run: nothing will be sent.");
+  if (config.dryRun) console.log("Dry run: nothing will be sent.");
+
+  const stats = { sent: 0, rejected: 0, errors: 0 };
+  if (config.backfill !== undefined && config.mode !== "open-meteo") {
+    await runSyntheticBackfill(config, stats);
+  } else {
+    console.log("This mode is not implemented yet.");
     return;
   }
-  console.log("Sending is not implemented yet.");
+  console.log(`Podsumowanie: wysłane ${stats.sent}, odrzucone ${stats.rejected}, błędy ${stats.errors}`);
+  if (stats.errors > 0) process.exitCode = 1;
 }
 
 // Run only when started from the command line, not when imported by a test.
