@@ -71,6 +71,32 @@ export async function fetchJson(url, { timeoutMs = 30_000 } = {}) {
   return body;
 }
 
+// Current conditions. Open-Meteo updates them every 15 minutes; current.time
+// is the start of that 15-minute block.
+export function currentUrl({ lat, lon, variable }) {
+  const params = new URLSearchParams({
+    latitude: String(lat),
+    longitude: String(lon),
+    current: variable,
+    timeformat: "unixtime",
+  });
+  return `${BASE_URL}?${params}`;
+}
+
+// Pure: { time (Unix seconds), value } from a `current` response.
+export function parseCurrent(body, variable) {
+  const time = body?.current?.time;
+  const value = body?.current?.[variable];
+  if (typeof time !== "number" || typeof value !== "number") {
+    throw new OpenMeteoError(`Odpowiedź Open-Meteo nie zawiera bieżącej wartości ${variable}.`);
+  }
+  return { time, value, unit: body.current_units?.[variable] };
+}
+
+export async function fetchCurrent({ lat, lon, variable }) {
+  return parseCurrent(await fetchJson(currentUrl({ lat, lon, variable })), variable);
+}
+
 // Hourly values of the last `hours` hours, plus the unit Open-Meteo used.
 export async function fetchBackfill({ lat, lon, variable, hours }, nowMs = Date.now()) {
   const body = await fetchJson(backfillUrl({ lat, lon, variable, hours }));

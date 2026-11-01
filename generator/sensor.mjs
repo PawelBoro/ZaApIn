@@ -5,7 +5,7 @@ import { pathToFileURL } from "node:url";
 import { parseArgs } from "node:util";
 import { uniform, walkStart, walkStep, sine } from "./lib/values.mjs";
 import { sendWithRetry, describe } from "./lib/api.mjs";
-import { fetchBackfill, UNITS, OpenMeteoError } from "./lib/openMeteo.mjs";
+import { fetchBackfill, fetchCurrent, UNITS, OpenMeteoError } from "./lib/openMeteo.mjs";
 
 const MODES = ["uniform", "walk", "sine", "open-meteo"];
 const VARIABLES = ["temperature_2m", "relative_humidity_2m", "surface_pressure", "wind_speed_10m"];
@@ -98,8 +98,12 @@ export function parseConfig(argv, env) {
     dryRun,
     api: values.api ?? env.ZAI_API_URL,
     key: values.key ?? env.SENSOR_API_KEY,
-    // Backfill defaults to hourly values, like Open-Meteo's hourly data.
-    interval: num(values, "interval", { fallback: backfill !== undefined ? 3600 : 60, positive: true }),
+    // Backfill defaults to hourly values, like Open-Meteo's hourly data;
+    // Open-Meteo's current values change every 15 minutes.
+    interval: num(values, "interval", {
+      fallback: backfill !== undefined ? 3600 : values.mode === "open-meteo" ? 900 : 60,
+      positive: true,
+    }),
   };
 
   // A dry run sends nothing, so it may run without the connection details.
@@ -282,6 +286,49 @@ async function runOpenMeteoBackfill(config, stats, signal) {
   }
 }
 
+// Polls current conditions every interval and sends only when current.time
+// has changed: Open-Meteo updates every 15 minutes, so polling more often
+// would otherwise store the same value several times. The last time is kept
+// in memory only, so a restart may send the current block once more.
+// The value is sent with current.time, the time it describes, not the
+// (later) time it happened to be polled.
+async function runOpenMeteoLive(config, stats, signal) {
+  if (config.interval < 300) {
+    console.warn(`UWAGA: Open-Meteo odświeża dane co 15 min; przy --interval ${config.interval} większość zapytań zwróci tę samą wartość (zalecane 300–900 s).`);
+  }
+  const startMs = Date.now();
+  let lastTime;
+  let unitShown = false;
+  let delivered = 0;
+  for (let poll = 1; config.count === undefined || delivered < config.count; poll++) {
+    if (signal.aborted) return;
+    const label = `[${poll}]`;
+    try {
+      const current = await fetchCurrent(config);
+      if (!unitShown) {
+        reportUnit(config.variable, current.unit);
+        unitShown = true;
+      }
+      if (current.time === lastTime) {
+        stats.skipped++;
+        console.log(`${label} bez zmian (blok ${new Date(current.time * 1000).toISOString()}), pomijam`);
+      } else {
+        const measurement = { value: current.value, timestamp: new Date(current.time * 1000).toISOString() };
+        if (!(await deliver(config, measurement, stats, label, signal))) return;
+        lastTime = current.time;
+        delivered++;
+      }
+    } catch (err) {
+      // A passing Open-Meteo problem (network, 429, 5xx) must not end a long run.
+      if (!(err instanceof OpenMeteoError)) throw err;
+      stats.errors++;
+      console.log(`${label} BŁĄD: ${err.message}; spróbuję w następnym cyklu`);
+    }
+    if (config.count !== undefined && delivered >= config.count) return;
+    if (!(await waitForNextSlot(startMs, config.interval * 1000, signal))) return;
+  }
+}
+
 // First Ctrl+C: finish the current request, then stop with a summary.
 // Second Ctrl+C: exit at once.
 function stopSignalOnCtrlC() {
@@ -315,7 +362,7 @@ async function main() {
   console.log("Config:", { ...config, key: maskKey(config.key) });
   if (config.dryRun) console.log("Dry run: nothing will be sent.");
 
-  const stats = { sent: 0, rejected: 0, errors: 0 };
+  const stats = { sent: 0, rejected: 0, errors: 0, skipped: 0 };
   const signal = stopSignalOnCtrlC();
   try {
     if (config.mode !== "open-meteo") {
@@ -324,15 +371,15 @@ async function main() {
     } else if (config.backfill !== undefined) {
       await runOpenMeteoBackfill(config, stats, signal);
     } else {
-      console.log("This mode is not implemented yet.");
-      return;
+      await runOpenMeteoLive(config, stats, signal);
     }
   } catch (err) {
     if (!(err instanceof OpenMeteoError)) throw err;
     console.error(`BŁĄD: ${err.message}`);
     stats.errors++;
   }
-  console.log(`Podsumowanie: wysłane ${stats.sent}, odrzucone ${stats.rejected}, błędy ${stats.errors}`);
+  const skipped = stats.skipped ? `, pominięte (bez zmian) ${stats.skipped}` : "";
+  console.log(`Podsumowanie: wysłane ${stats.sent}, odrzucone ${stats.rejected}, błędy ${stats.errors}${skipped}`);
   if (stats.errors > 0) process.exitCode = 1;
 }
 

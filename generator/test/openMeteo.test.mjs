@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { backfillUrl, selectBackfill, OpenMeteoError } from "../lib/openMeteo.mjs";
+import { backfillUrl, currentUrl, parseCurrent, selectBackfill, OpenMeteoError } from "../lib/openMeteo.mjs";
 
 const H = 3600;
 // "Now" is 18:47 UTC; the data runs from 14:00 to 21:00, like a real response
@@ -52,4 +52,18 @@ test("backfill URL asks for whole past days and unix time", () => {
   assert.equal(url.searchParams.get("forecast_days"), "1");
   assert.equal(url.searchParams.get("timeformat"), "unixtime");
   assert.equal(url.searchParams.get("hourly"), "temperature_2m");
+});
+
+test("current value: time and value are read, a missing value is an error", () => {
+  const body = { current: { time: 1793560500, interval: 900, temperature_2m: 7.7 }, current_units: { temperature_2m: "°C" } };
+  assert.deepEqual(parseCurrent(body, "temperature_2m"), { time: 1793560500, value: 7.7, unit: "°C" });
+  assert.throws(() => parseCurrent({ current: { time: 1793560500, temperature_2m: null } }, "temperature_2m"), OpenMeteoError);
+  assert.throws(() => parseCurrent({}, "temperature_2m"), OpenMeteoError);
+});
+
+test("current URL asks for one variable in unix time", () => {
+  const url = new URL(currentUrl({ lat: 52.23, lon: 21.01, variable: "wind_speed_10m" }));
+  assert.equal(url.searchParams.get("current"), "wind_speed_10m");
+  assert.equal(url.searchParams.get("timeformat"), "unixtime");
+  assert.equal(url.searchParams.get("hourly"), null);
 });
