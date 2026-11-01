@@ -222,6 +222,10 @@ async function deliver(config, measurement, stats, label, signal) {
     default:
       // unauthorized, fatal, or retryable after the last retry.
       stats.errors++;
+      stats.stopReason =
+        result.outcome === "unauthorized" ? "klucz nieprawidłowy lub czujnik wyrejestrowany (401)"
+        : result.outcome === "retryable" ? `serwer niedostępny po ${result.attempts} próbach`
+        : `nieoczekiwana odpowiedź HTTP ${result.status}`;
       return false;
   }
 }
@@ -346,7 +350,27 @@ function stopSignalOnCtrlC() {
   return controller.signal;
 }
 
+// One value, no timestamp, then exit. Made to show a rejection (422) in a demo,
+// so a rejection is the expected result here, not an error.
+async function runOutlier(config, stats, signal) {
+  await deliver(config, { value: config.outlier }, stats, "[outlier]", signal);
+  if (stats.sent === 1) {
+    console.log("UWAGA: wartość została przyjęta, czyli mieści się w zakresie serii; dla tej serii nie jest odstająca.");
+  }
+}
+
+// Pure: the closing lines. Rejections are not errors: the server worked and said no.
+export function formatSummary(stats, durationMs) {
+  const skipped = stats.skipped ? `, pominięte (bez zmian) ${stats.skipped}` : "";
+  const lines = [
+    `Podsumowanie (${(durationMs / 1000).toFixed(1)} s): wysłane ${stats.sent}, odrzucone ${stats.rejected}, błędy ${stats.errors}${skipped}`,
+  ];
+  if (stats.stopReason) lines.push(`Zakończono wcześniej: ${stats.stopReason}.`);
+  return lines.join("\n");
+}
+
 async function main() {
+  const startedMs = Date.now();
   let config;
   try {
     config = parseConfig(process.argv.slice(2), process.env);
@@ -365,7 +389,9 @@ async function main() {
   const stats = { sent: 0, rejected: 0, errors: 0, skipped: 0 };
   const signal = stopSignalOnCtrlC();
   try {
-    if (config.mode !== "open-meteo") {
+    if (config.outlier !== undefined) {
+      await runOutlier(config, stats, signal);
+    } else if (config.mode !== "open-meteo") {
       if (config.backfill !== undefined) await runSyntheticBackfill(config, stats, signal);
       else await runSyntheticLive(config, stats, signal);
     } else if (config.backfill !== undefined) {
@@ -377,9 +403,10 @@ async function main() {
     if (!(err instanceof OpenMeteoError)) throw err;
     console.error(`BŁĄD: ${err.message}`);
     stats.errors++;
+    stats.stopReason ??= "nie udało się pobrać danych z Open-Meteo";
   }
-  const skipped = stats.skipped ? `, pominięte (bez zmian) ${stats.skipped}` : "";
-  console.log(`Podsumowanie: wysłane ${stats.sent}, odrzucone ${stats.rejected}, błędy ${stats.errors}${skipped}`);
+  if (signal.aborted) stats.stopReason ??= "zatrzymano przez Ctrl+C";
+  console.log(formatSummary(stats, Date.now() - startedMs));
   if (stats.errors > 0) process.exitCode = 1;
 }
 
