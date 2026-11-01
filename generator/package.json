@@ -1,0 +1,12 @@
+{
+  "name": "zaapin-generator",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Sensor emulator for the ZAI API (no dependencies)",
+  "engines": {
+    "node": ">=20"
+  },
+  "scripts": {
+    "test": "node --test"
+  }
+}
