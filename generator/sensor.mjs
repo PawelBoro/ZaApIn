@@ -5,6 +5,7 @@ import { pathToFileURL } from "node:url";
 import { parseArgs } from "node:util";
 import { uniform, walkStart, walkStep, sine } from "./lib/values.mjs";
 import { sendWithRetry, describe } from "./lib/api.mjs";
+import { fetchBackfill, UNITS, OpenMeteoError } from "./lib/openMeteo.mjs";
 
 const MODES = ["uniform", "walk", "sine", "open-meteo"];
 const VARIABLES = ["temperature_2m", "relative_humidity_2m", "surface_pressure", "wind_speed_10m"];
@@ -261,6 +262,26 @@ async function runSyntheticLive(config, stats, signal) {
   }
 }
 
+// The API knows nothing about units: humidity in % would pass the range check
+// of a °C series. So the unit is shown, and a surprise is warned about.
+function reportUnit(variable, unit) {
+  console.log(`Open-Meteo: ${variable} w ${unit} (seria musi mieć tę samą jednostkę). Weather data by Open-Meteo.com (CC BY 4.0)`);
+  if (unit !== UNITS[variable]) {
+    console.warn(`UWAGA: oczekiwano jednostki ${UNITS[variable]}, Open-Meteo zwróciło ${unit}.`);
+  }
+}
+
+async function runOpenMeteoBackfill(config, stats, signal) {
+  const { unit, measurements } = await fetchBackfill({ ...config, hours: config.backfill });
+  reportUnit(config.variable, unit);
+  const selected = config.count === undefined ? measurements : measurements.slice(-config.count);
+  console.log(`Open-Meteo: ${selected.length} wartości godzinowych z ostatnich ${config.backfill} h.`);
+  for (const [i, measurement] of selected.entries()) {
+    if (signal.aborted) return;
+    if (!(await deliver(config, measurement, stats, `[${i + 1}/${selected.length}]`, signal))) return;
+  }
+}
+
 // First Ctrl+C: finish the current request, then stop with a summary.
 // Second Ctrl+C: exit at once.
 function stopSignalOnCtrlC() {
@@ -296,12 +317,20 @@ async function main() {
 
   const stats = { sent: 0, rejected: 0, errors: 0 };
   const signal = stopSignalOnCtrlC();
-  if (config.mode !== "open-meteo") {
-    if (config.backfill !== undefined) await runSyntheticBackfill(config, stats, signal);
-    else await runSyntheticLive(config, stats, signal);
-  } else {
-    console.log("This mode is not implemented yet.");
-    return;
+  try {
+    if (config.mode !== "open-meteo") {
+      if (config.backfill !== undefined) await runSyntheticBackfill(config, stats, signal);
+      else await runSyntheticLive(config, stats, signal);
+    } else if (config.backfill !== undefined) {
+      await runOpenMeteoBackfill(config, stats, signal);
+    } else {
+      console.log("This mode is not implemented yet.");
+      return;
+    }
+  } catch (err) {
+    if (!(err instanceof OpenMeteoError)) throw err;
+    console.error(`BŁĄD: ${err.message}`);
+    stats.errors++;
   }
   console.log(`Podsumowanie: wysłane ${stats.sent}, odrzucone ${stats.rejected}, błędy ${stats.errors}`);
   if (stats.errors > 0) process.exitCode = 1;
