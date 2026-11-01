@@ -59,6 +59,33 @@ test("waits as long as Retry-After asks, capped at maxDelayMs", async () => {
   assert.deepEqual(delays, [30_000, 60_000]);
 });
 
+test("after Ctrl+C a failure is not retried or announced as a retry", async () => {
+  const controller = new AbortController();
+  const { send, calls } = scripted(interpret(503, null), created);
+  const retries = [];
+  const sending = sendWithRetry({}, { value: 5 }, { send, signal: controller.signal, onRetry: (r) => retries.push(r) });
+  controller.abort();
+  const result = await sending;
+  assert.equal(result.outcome, "retryable");
+  assert.equal(calls.length, 1);
+  assert.equal(retries.length, 0);
+});
+
+test("Ctrl+C during the wait between retries stops at once", async () => {
+  const controller = new AbortController();
+  const { send, calls } = scripted(fetchFailed(), created);
+  const started = Date.now();
+  const result = await sendWithRetry({}, { value: 5 }, {
+    send,
+    baseDelayMs: 10_000,
+    signal: controller.signal,
+    onRetry: () => controller.abort(),
+  });
+  assert.equal(result.outcome, "retryable");
+  assert.equal(calls.length, 1);
+  assert.ok(Date.now() - started < 1000, "waited for the backoff");
+});
+
 test("a bug in our code is thrown, not retried", async () => {
   const { send, calls } = scripted(new ReferenceError("oops"), created);
   await assert.rejects(sendWithRetry({}, { value: 5 }, { send, sleep: async () => {} }), ReferenceError);

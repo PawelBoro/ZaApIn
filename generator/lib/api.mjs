@@ -68,11 +68,19 @@ export async function sendWithRetry(conn, measurement, opts = {}) {
     } catch (err) {
       result = networkFailure(err, timeoutMs);
     }
-    if (result.outcome !== "retryable" || attempt === retries) return { ...result, attempts: attempt + 1 };
+    if (result.outcome !== "retryable" || attempt === retries || opts.signal?.aborted) {
+      return { ...result, attempts: attempt + 1 };
+    }
     const backoffMs = baseDelayMs * 2 ** attempt;
     const delayMs = Math.min(maxDelayMs, Math.max(backoffMs, (result.retryAfter ?? 0) * 1000));
     onRetry({ attempt: attempt + 1, retries, delayMs, result });
-    await sleep(delayMs);
+    // opts.signal (Ctrl+C) cuts the wait short; the last failure is returned.
+    try {
+      await sleep(delayMs, undefined, { signal: opts.signal });
+    } catch (err) {
+      if (err?.name === "AbortError") return { ...result, attempts: attempt + 1 };
+      throw err;
+    }
   }
 }
 

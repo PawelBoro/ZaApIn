@@ -1,5 +1,6 @@
 #!/usr/bin/env node
 // Sensor emulator: sends synthetic or Open-Meteo values to the ZAI API.
+import { setTimeout as sleep } from "node:timers/promises";
 import { pathToFileURL } from "node:url";
 import { parseArgs } from "node:util";
 import { uniform, walkStart, walkStep, sine } from "./lib/values.mjs";
@@ -192,12 +193,13 @@ export function backfillTimes(count, intervalS, nowMs) {
 
 // Sends one measurement, prints the outcome, updates stats.
 // Returns false when sending more makes no sense.
-async function deliver(config, measurement, stats, label) {
+async function deliver(config, measurement, stats, label, signal) {
   if (config.dryRun) {
     console.log(`${label} DRY-RUN value=${measurement.value}${measurement.timestamp ? ` time=${measurement.timestamp}` : ""}`);
     return true;
   }
   const result = await sendWithRetry(config, measurement, {
+    signal,
     onRetry: ({ attempt, retries, delayMs, result: r }) =>
       console.log(`${label} ${describe(r, measurement)} -> ponowienie ${attempt}/${retries} za ${delayMs / 1000} s`),
   });
@@ -219,13 +221,61 @@ async function deliver(config, measurement, stats, label) {
   }
 }
 
-async function runSyntheticBackfill(config, stats) {
+async function runSyntheticBackfill(config, stats, signal) {
   const next = makeSource(config);
   const times = backfillTimes(config.count, config.interval, Date.now());
   for (const [i, time] of times.entries()) {
+    if (signal.aborted) return;
     const measurement = { value: next(time.getTime() / 1000), timestamp: time.toISOString() };
-    if (!(await deliver(config, measurement, stats, `[${i + 1}/${times.length}]`))) return;
+    if (!(await deliver(config, measurement, stats, `[${i + 1}/${times.length}]`, signal))) return;
   }
+}
+
+// Waits until the next slot start + k * interval. Slots are counted from the
+// start (fixed rate), so the time each send takes does not add up; slots
+// missed during long retries are skipped, not sent in a burst.
+// Returns false if Ctrl+C came while waiting.
+async function waitForNextSlot(startMs, intervalMs, signal) {
+  const elapsed = Date.now() - startMs;
+  const nextSlot = (Math.floor(elapsed / intervalMs) + 1) * intervalMs;
+  try {
+    await sleep(startMs + nextSlot - Date.now(), undefined, { signal });
+    return true;
+  } catch (err) {
+    if (err?.name === "AbortError") return false;
+    throw err;
+  }
+}
+
+// One value now, then one per interval, until --count or Ctrl+C. No timestamp:
+// the server's clock sets it.
+async function runSyntheticLive(config, stats, signal) {
+  const next = makeSource(config);
+  const startMs = Date.now();
+  for (let n = 1; config.count === undefined || n <= config.count; n++) {
+    if (signal.aborted) return;
+    const label = config.count === undefined ? `[${n}]` : `[${n}/${config.count}]`;
+    if (!(await deliver(config, { value: next(Date.now() / 1000) }, stats, label, signal))) return;
+    if (n === config.count) return;
+    if (!(await waitForNextSlot(startMs, config.interval * 1000, signal))) return;
+  }
+}
+
+// First Ctrl+C: finish the current request, then stop with a summary.
+// Second Ctrl+C: exit at once.
+function stopSignalOnCtrlC() {
+  const controller = new AbortController();
+  const onSignal = () => {
+    if (controller.signal.aborted) {
+      console.log("\nPrzerwano natychmiast.");
+      process.exit(130);
+    }
+    console.log("\nZatrzymywanie po bieżącym wyniku... (Ctrl+C ponownie: natychmiast)");
+    controller.abort();
+  };
+  process.on("SIGINT", onSignal);
+  process.on("SIGTERM", onSignal);
+  return controller.signal;
 }
 
 async function main() {
@@ -245,8 +295,10 @@ async function main() {
   if (config.dryRun) console.log("Dry run: nothing will be sent.");
 
   const stats = { sent: 0, rejected: 0, errors: 0 };
-  if (config.backfill !== undefined && config.mode !== "open-meteo") {
-    await runSyntheticBackfill(config, stats);
+  const signal = stopSignalOnCtrlC();
+  if (config.mode !== "open-meteo") {
+    if (config.backfill !== undefined) await runSyntheticBackfill(config, stats, signal);
+    else await runSyntheticLive(config, stats, signal);
   } else {
     console.log("This mode is not implemented yet.");
     return;
