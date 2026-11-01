@@ -12,9 +12,17 @@ const COLUMNS = "id, name, series_id, created_at, last_measurement_at";
 
 const sensorSchema = z.object({
   name: z.string().min(1).max(100),
-  // Capped at MAX_INT so a huge id is a 400, not an "integer out of range" 500.
-  seriesId: z.number().int().positive().max(MAX_INT),
+  // The contract's Id is integer or string, so "3" is accepted as 3.
+  seriesId: z.union([
+    z.number().int().positive(),
+    z.string().regex(/^[1-9]\d*$/, "Must be a positive integer.").transform(Number),
+  ]),
 });
+
+function seriesNotFound(res) {
+  return problem(res, 422, "Unprocessable Content", "Series does not exist.",
+    [{ field: "seriesId", message: "Series does not exist." }]);
+}
 
 function toSensor(row) {
   return {
@@ -60,6 +68,9 @@ router.post("/", async (req, res) => {
     return problem(res, 400, "Bad Request", "Invalid sensor.", validationErrors(parsed.error));
   }
   const { name, seriesId } = parsed.data;
+  // No series can have an id above INTEGER max; sending it to PostgreSQL
+  // would fail with "integer out of range" (500) instead.
+  if (seriesId > MAX_INT) return seriesNotFound(res);
 
   // The key is shown once; only its hash is stored.
   const apiKey = crypto.randomBytes(32).toString("hex");
@@ -71,10 +82,7 @@ router.post("/", async (req, res) => {
      RETURNING ${COLUMNS}`,
     [name, seriesId, sha256(apiKey)]
   );
-  if (rows.length === 0) {
-    return problem(res, 422, "Unprocessable Content", "Series does not exist.",
-      [{ field: "seriesId", message: "Series does not exist." }]);
-  }
+  if (rows.length === 0) return seriesNotFound(res);
   res.status(201).location(`/api/sensors/${rows[0].id}`).json({ ...toSensor(rows[0]), apiKey });
 });
 
