@@ -30,7 +30,8 @@ Timing:
   --backfill <hours>   send past values with timestamps, ending now, then exit
   --count <n>          number of values
                        (backfill default: enough to cover the hours; live: unlimited)
-  --interval <s>       seconds between values (default 60; backfill 3600)
+  --interval <s>       seconds between values
+                       (default 60; Open-Meteo live 900; backfill 3600)
   --outlier <value>    send this one value and exit
 
   --dry-run            print what would be sent, send nothing
