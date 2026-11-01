@@ -121,13 +121,21 @@ router.post("/", requireSensor, async (req, res) => {
   const client = await pool.connect();
   try {
     await client.query("BEGIN");
-    // FOR SHARE pairs with the FOR UPDATE in PUT /api/series/:id: the range
-    // cannot change between this check and the insert.
+    // Both rows stay locked until COMMIT, so between this check and the insert
+    // the sensor cannot be unregistered and the range cannot change (PUT on
+    // the series takes FOR UPDATE).
+    // The sensor row gets NO KEY UPDATE, the lock the last_measurement_at
+    // UPDATE below needs anyway: with FOR SHARE, two concurrent measurements
+    // of one sensor would each wait for the other's share lock (deadlock).
+    // The series row only needs SHARE, so sensors of one series run in parallel.
     const found = await client.query(
-      "SELECT min_value, max_value FROM series WHERE id = $1 FOR SHARE",
-      [seriesId]
+      `SELECT se.min_value, se.max_value
+       FROM sensors s JOIN series se ON se.id = s.series_id
+       WHERE s.id = $1 AND s.deleted_at IS NULL
+       FOR NO KEY UPDATE OF s FOR SHARE OF se`,
+      [sensorId]
     );
-    // The series (and with it the sensor) was deleted after the key check.
+    // The sensor was unregistered or its series deleted after the key check.
     if (found.rowCount === 0) {
       await client.query("ROLLBACK");
       return unauthorized(res);
