@@ -4,13 +4,15 @@
   "private": true,
   "main": "src/server.js",
   "engines": {
-    "node": ">=20"
+    "node": "22.x"
   },
   "scripts": {
     "start": "node src/server.js",
     "dev": "node --watch-path=src --watch-path=.env src/server.js",
     "migrate": "node scripts/migrate.js",
-    "create-admin": "node scripts/create-admin.js"
+    "create-admin": "node scripts/create-admin.js",
+    "migrate:prod": "ENV_FILE=.env.production node scripts/migrate.js",
+    "create-admin:prod": "ENV_FILE=.env.production node scripts/create-admin.js"
   },
   "dependencies": {
     "bcryptjs": "^3.0.3",

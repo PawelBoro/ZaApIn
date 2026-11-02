@@ -10,6 +10,9 @@ const sensorsRouter = require("./routes/sensors");
 const measurementsRouter = require("./routes/measurements");
 
 const app = express();
+// Render puts one proxy in front of the app. Trust exactly that one hop, so
+// req.ip is the client from X-Forwarded-For and req.protocol is "https".
+app.set("trust proxy", 1);
 app.use(helmet());
 
 /*
