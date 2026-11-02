@@ -20,7 +20,8 @@ Value source:
   --mode <mode>        uniform | walk | sine | open-meteo
   --min, --max <n>     value range (uniform, walk, sine)
   --step <n>           max change per value (walk; default (max-min)/20)
-  --period <s>         sine period in seconds (default 3600)
+  --period <s>         sine period in seconds (default 86400, one day);
+                       --interval should not be a multiple of it
   --noise <n>          random noise added to sine (default 0)
   --lat, --lon <deg>   location (open-meteo)
   --variable <name>    ${VARIABLES.join(" | ")}
@@ -164,10 +165,21 @@ export function parseConfig(argv, env) {
     config.step = num(values, "step", { fallback: (config.max - config.min) / 20, positive: true });
   }
   if (config.mode === "sine") {
-    config.period = num(values, "period", { fallback: 3600, positive: true });
+    config.period = num(values, "period", { fallback: 86400, positive: true });
     config.noise = num(values, "noise", { fallback: 0, min: 0 });
   }
   return config;
+}
+
+// Pure: a warning when every sine sample lands on the same phase. If the
+// interval is a whole multiple of the period, sin(2πt/period) repeats at each
+// sample, so a "wave" comes out as a flat line (aliasing). The ratio is
+// rounded to tolerate float error, e.g. --period 0.1 --interval 0.3.
+export function aliasingWarning(config) {
+  if (config.mode !== "sine") return undefined;
+  const ratio = config.interval / config.period;
+  if (ratio < 1 || Math.abs(ratio - Math.round(ratio)) > 1e-9) return undefined;
+  return `UWAGA: --interval ${config.interval} jest wielokrotnością --period ${config.period}; każda próbka trafi w tę samą fazę sinusa, więc wartości będą stałe (aliasing). Ustaw --interval mniejszy niż --period, najlepiej wiele razy.`;
 }
 
 // Shows enough of the key to tell sensors apart, never the whole key.
@@ -386,6 +398,8 @@ async function main() {
   }
   console.log("Config:", { ...config, key: maskKey(config.key) });
   if (config.dryRun) console.log("Dry run: nothing will be sent.");
+  const aliasing = aliasingWarning(config);
+  if (aliasing) console.warn(aliasing);
 
   const stats = { sent: 0, rejected: 0, errors: 0, skipped: 0 };
   const signal = stopSignalOnCtrlC();
