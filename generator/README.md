@@ -45,7 +45,7 @@ recording. Never commit a key; if one leaks, delete the sensor
 | `--mode <mode>` | | `uniform`, `walk`, `sine` or `open-meteo` |
 | `--min`, `--max <n>` | | value range (`uniform`, `walk`, `sine`) |
 | `--step <n>` | (max-min)/20 | `walk`: largest change between values |
-| `--period <s>` | 3600 | `sine`: period in seconds |
+| `--period <s>` | 86400 | `sine`: period in seconds (one day) |
 | `--noise <n>` | 0 | `sine`: random noise of up to ±n |
 | `--lat`, `--lon <deg>` | | `open-meteo`: location |
 | `--variable <name>` | `temperature_2m` | `open-meteo`: see [Open-Meteo](#open-meteo) |
@@ -69,7 +69,10 @@ flag).
   the middle of the range and bouncing off its bounds.
 - `sine`: a sine wave between `min` and `max` with `--period`, plus optional
   `--noise` (clamped to the range). The phase follows the clock, so a backfill
-  and a later live run join into one curve.
+  and a later live run join into one curve. The default period is one day, a
+  daily cycle like temperature. Keep `--interval` well below `--period`: if it
+  is a whole multiple of it, every sample hits the same phase and the curve
+  is a flat line (aliasing); the generator warns about it.
 - `open-meteo`: real weather data, see below.
 
 **Timing:**

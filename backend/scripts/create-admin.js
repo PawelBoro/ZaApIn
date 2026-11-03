@@ -1,14 +1,15 @@
-require("dotenv").config();
+const { confirmTarget } = require("./load-env");
 const bcrypt = require("bcryptjs");
 const pool = require("../src/db");
 
 async function main() {
+  await confirmTarget();
   const { ADMIN_USERNAME: username, ADMIN_PASSWORD: password } = process.env;
   if (!username || !password) {
-    throw new Error("ADMIN_USERNAME and ADMIN_PASSWORD must be set in .env");
+    throw new Error("ADMIN_USERNAME and ADMIN_PASSWORD must be set in the env file");
   }
   if (password === "change-me" || password === "CHANGE_ME_BEFORE_RUNNING") {
-    throw new Error("ADMIN_PASSWORD is still a placeholder - set a real one in .env");
+    throw new Error("ADMIN_PASSWORD is still a placeholder - set a real one in the env file");
   }
   if (password.length < 8) {
     throw new Error("ADMIN_PASSWORD must be at least 8 characters");

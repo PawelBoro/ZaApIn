@@ -1,4 +1,4 @@
-require("dotenv").config();
+const { confirmTarget } = require("./load-env");
 const fs = require("node:fs");
 const path = require("node:path");
 const pool = require("../src/db");
@@ -6,6 +6,7 @@ const pool = require("../src/db");
 const dir = path.join(__dirname, "..", "db", "migrations");
 
 async function main() {
+  await confirmTarget();
   const client = await pool.connect();
   try {
     await client.query(

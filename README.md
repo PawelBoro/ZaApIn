@@ -17,7 +17,7 @@ generator/     # Sensor emulator: sends measurements to the API
 
 ## Backend setup
 
-Requirements: Node >= 20, and for Entra database auth the Azure CLI (`az`).
+Requirements: Node 22, and for Entra database auth the Azure CLI (`az`).
 
 ```bash
 cd backend
@@ -45,6 +45,48 @@ npm run create-admin   # creates or updates the admin from ADMIN_USERNAME / ADMI
 npm start              # or `npm run dev` to restart on changes in src/ or .env
 curl -s localhost:3000/api/health    # {"status":"ok"}
 ```
+
+## Deployment
+
+The API runs on Render (free Web Service, Frankfurt) and uses the production
+database `postgres` on the Azure PostgreSQL flexible server. Two database roles:
+
+- **Entra admin** (you, after `az login`): runs migrations, grants and
+  `create-admin` from your machine. Owns the tables.
+- **`zai_app`** (password login): used by the app on Render. Data only
+  (SELECT/INSERT/UPDATE/DELETE), cannot create tables or roles.
+
+### Steps (in this order)
+
+1. Azure portal -> server -> Authentication: *PostgreSQL and Microsoft Entra
+   authentication* (Render has no `az` CLI, so the app needs a password).
+2. As the Entra admin, in `psql` on database `postgres`:
+   `CREATE ROLE zai_app LOGIN;` then `\password zai_app`.
+3. Create `backend/.env.production` (git-ignored) like `.env`, with
+   `DB_NAME=postgres`, `DB_AUTH=entra` and the production admin credentials, then:
+   ```bash
+   npm run migrate:prod        # asks for confirmation, shows DB_HOST/DB_NAME
+   psql "host=<DB_HOST> dbname=postgres user=<entra-admin> sslmode=require" \
+     -v app_role=zai_app -f db/grants.sql
+   npm run create-admin:prod
+   ```
+4. Render -> New Web Service from this repo: Root Directory `backend`,
+   Build `npm ci`, Start `npm start`, Health Check Path `/api/health`.
+   Node version comes from `engines` in `package.json`.
+5. Azure -> Networking: add firewall rules for Render's outbound IP ranges
+   (`node scripts/cidr-to-range.mjs <cidr>...` converts them to start/end).
+
+### Environment variables on Render
+
+`DB_HOST`, `DB_PORT` (5432), `DB_NAME` (`postgres`), `DB_USER` (`zai_app`),
+`DB_AUTH` (`password`), `DB_PASSWORD`, `TOKEN_TTL_SECONDS`, `NODE_ENV`
+(`production`). `PORT` is set by Render. `ADMIN_*` is not needed there: the
+admin is created once from your machine, the running app never reads it.
+
+### Free plan
+
+The service sleeps after ~15 minutes without traffic; the next request wakes it
+and can take about a minute. Auto-Deploy redeploys on every push to `main`.
 
 ## Sensor emulator (generator)
 
