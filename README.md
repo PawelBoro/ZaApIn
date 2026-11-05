@@ -109,3 +109,44 @@ modes, exit codes and the Open-Meteo attribution are in
 [generator/README.md](generator/README.md).
 
 Weather data by [Open-Meteo.com](https://open-meteo.com/) (CC BY 4.0).
+
+## Sample data
+
+`generator/seed-weather.mjs` fills the app with sample data (requirement F11):
+four series of real Warsaw weather (52.23, 21.01) from the last 48 hours of
+Open-Meteo hourly data, one value per hour.
+
+| Series | Unit | Range | Icon | Open-Meteo variable |
+|---|---|---|---|---|
+| Warszawa – temperatura | °C | −40..50 | thermometer | `temperature_2m` |
+| Warszawa – wilgotność | % | 0..100 | droplet | `relative_humidity_2m` |
+| Warszawa – ciśnienie | hPa | 900..1100 | gauge | `surface_pressure` |
+| Warszawa – wiatr | km/h | 0..200 | wind | `wind_speed_10m` |
+
+Everything goes through the API, never straight into the database: the script
+logs in as admin, creates the missing series, registers one sensor per series
+and sends the values with that sensor's key, so they pass the same validation
+as any other measurement.
+
+```bash
+cd generator
+export ZAI_API_URL=http://localhost:3000 ZAI_ADMIN_USER=admin
+node seed-weather.mjs --dry-run        # plan only, no login, nothing changes
+node seed-weather.mjs                  # asks for the admin password (hidden)
+```
+
+| Option | Default | Meaning |
+|---|---|---|
+| `--api <url>` | env `ZAI_API_URL` | API base URL |
+| `--user <name>` | env `ZAI_ADMIN_USER` | admin login; password from env `ZAI_ADMIN_PASSWORD` or a hidden prompt |
+| `--hours <n>` | 48 | hours of data to send |
+| `--min-count <n>` | 15 | skip a series that already has this many values |
+| `--dry-run` | | show the plan, change nothing |
+
+Running it again is safe: series are found by name, a series with at least
+`--min-count` values is skipped, and only hours newer than the last stored
+value are sent. Sensor API keys stay in the process memory only; to send live
+data later, register a new sensor in the app.
+
+Weather data by [Open-Meteo.com](https://open-meteo.com/) (CC BY 4.0); the script prints
+the same attribution after each run.
